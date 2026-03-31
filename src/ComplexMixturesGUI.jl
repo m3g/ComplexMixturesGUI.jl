@@ -131,8 +131,9 @@ input, select, textarea { font-size: 12px !important; }
 .cm-lims-row span { color: #666; font-size: 10px; }
 .cm-lims-row input[type=number] { width: 50px; font-size: 10px; padding: 1px 3px; }
 .cm-lims-row button { font-size: 10px; padding: 2px 6px; }
-.cm-lims-input { flex: 1; min-width: 0; overflow: hidden; }
-.cm-lims-input input { width: 100% !important; font-size: 10px !important; padding: 1px 3px !important; box-sizing: border-box; }
+.cm-lims-input { flex: 0 0 82px; width: 82px; min-width: 0; }
+.cm-lims-input > * { width: 82px !important; max-width: 82px !important; min-width: 0 !important; box-sizing: border-box !important; }
+.cm-lims-input input { width: 82px !important; max-width: 82px !important; font-size: 10px !important; padding: 1px 3px !important; box-sizing: border-box !important; }
 .cm-overview { font-family: 'Cascadia Mono', 'Consolas', monospace; font-size: 11px; white-space: pre-wrap; padding: 6px;
                border: 1px solid #ddd; border-radius: 4px; background: #fff; max-height: 400px; overflow-y: auto; }
 .cm-overview table { border-collapse: collapse; width: 100%; font-size: 11px; }
@@ -528,7 +529,7 @@ function gui(;
         fig3_cn = Figure(; size=(900, 295))
         ax_rc_cn = Axis(fig3_cn[1, 1]; xticklabelsize=9, yticklabelsize=11)
         tf_rc_sel = Bonito.TextField("protein")
-        btn_rc_update = Bonito.Button("Update")
+        btn_rc_plot = Bonito.Button("Plot")
 
         btn_export_csv_rc  = Bonito.Button("Export data (CSV)")
         dd_export_fmt_rc   = Bonito.Dropdown(["svg", "pdf", "png"])
@@ -561,7 +562,7 @@ function gui(;
             ),
             DOM.div(class="cm-grp-panel",
                 DOM.div(class="cm-row cm-row-left", DOM.label("Selection:"), tf_rc_sel),
-                DOM.div(style="text-align: center; margin: 4px 0;", btn_rc_update),
+                DOM.div(style="text-align: center; margin: 4px 0;", btn_rc_plot),
                 DOM.div(class="cm-export-section",
                     DOM.div(class="cm-grp-panel-title", "Limits"),
                     DOM.div(class="cm-lims-row",
@@ -1092,7 +1093,7 @@ function gui(;
         end
 
         # ── Tab 3: residue contributions ──────────────────────────────
-        on(btn_rc_update.value) do _
+        on(btn_rc_plot.value) do _
             R = result_obs[]
             R === nothing && (status_obs[] = "No results loaded"; return)
             at = atoms_obs[]
@@ -1176,7 +1177,7 @@ function gui(;
             xlo = round(Int, tf_rc_xmin.value[]); xhi = round(Int, tf_rc_xmax.value[])
             xlims!(ax_rc_mddf, xlo, xhi); xlims!(ax_rc_cn, xlo, xhi)
             # y-limits are dmin/dmax — recompute the plot
-            notify(btn_rc_update.value)
+            notify(btn_rc_plot.value)
         end
 
         # ── Tab 4 (RC): export figures ────────────────────────────────
