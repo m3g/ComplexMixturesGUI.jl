@@ -14,6 +14,9 @@ using Statistics: mean, std
 
 export gui
 
+# Base src directory
+const src_dir = @__DIR__
+
 # ─────────────────────────────────────────────────────────────────────────
 # Native file dialog helper (runs server-side)
 # ─────────────────────────────────────────────────────────────────────────
@@ -128,6 +131,8 @@ input, select, textarea { font-size: 12px !important; }
 .cm-lims-row span { color: #666; font-size: 10px; }
 .cm-lims-row input[type=number] { width: 50px; font-size: 10px; padding: 1px 3px; }
 .cm-lims-row button { font-size: 10px; padding: 2px 6px; }
+.cm-lims-input { flex: 1; min-width: 0; overflow: hidden; }
+.cm-lims-input input { width: 100% !important; font-size: 10px !important; padding: 1px 3px !important; box-sizing: border-box; }
 .cm-overview { font-family: 'Cascadia Mono', 'Consolas', monospace; font-size: 11px; white-space: pre-wrap; padding: 6px;
                border: 1px solid #ddd; border-radius: 4px; background: #fff; max-height: 400px; overflow-y: auto; }
 .cm-overview table { border-collapse: collapse; width: 100%; font-size: 11px; }
@@ -454,11 +459,6 @@ function gui(;
                     ),
                 ),
                 DOM.div(class="cm-xlabel", "r (Angstrom)"),
-                DOM.div(class="cm-lims-row",
-                    DOM.span("Limits:"),
-                    DOM.span("x:"), tf_grp_xmin, DOM.span("–"), tf_grp_xmax,
-                    DOM.span("y:"), tf_grp_ymin, DOM.span("–"), tf_grp_ymax,
-                    btn_grp_lims_sol),
             ),
             DOM.div(class="cm-grp-panel",
                 DOM.div(class="cm-row cm-row-left", DOM.label("Solute:"), tf_comp_sol),
@@ -467,6 +467,13 @@ function gui(;
                 checklist_sol_dom,
                 DOM.div(style="margin: 4px 0;", btn_rmgrp_sol),
                 DOM.div(class="cm-export-section",
+                    DOM.div(class="cm-grp-panel-title", "Limits"),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_grp_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_xmax)),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_grp_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_ymax)),
+                    DOM.div(class="cm-export-btns", btn_grp_lims_sol),
+                    DOM.hr(class="cm-advanced-sep"),
                     DOM.div(class="cm-grp-panel-title", "Export"),
                     DOM.div(class="cm-export-field-inline", DOM.label("Format:"), dd_export_fmt_sol),
                     DOM.div(class="cm-export-btns", btn_export_mddf_sol, btn_export_cn_sol),
@@ -492,11 +499,6 @@ function gui(;
                     ),
                 ),
                 DOM.div(class="cm-xlabel", "r (Angstrom)"),
-                DOM.div(class="cm-lims-row",
-                    DOM.span("Limits:"),
-                    DOM.span("x:"), tf_grp_xmin, DOM.span("–"), tf_grp_xmax,
-                    DOM.span("y:"), tf_grp_ymin, DOM.span("–"), tf_grp_ymax,
-                    btn_grp_lims_slv),
             ),
             DOM.div(class="cm-grp-panel",
                 DOM.div(class="cm-row cm-row-left", DOM.label("Solvent:"), tf_comp_slv),
@@ -505,6 +507,13 @@ function gui(;
                 checklist_slv_dom,
                 DOM.div(style="margin: 4px 0;", btn_rmgrp_slv),
                 DOM.div(class="cm-export-section",
+                    DOM.div(class="cm-grp-panel-title", "Limits"),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_grp_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_xmax)),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_grp_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_ymax)),
+                    DOM.div(class="cm-export-btns", btn_grp_lims_slv),
+                    DOM.hr(class="cm-advanced-sep"),
                     DOM.div(class="cm-grp-panel-title", "Export"),
                     DOM.div(class="cm-export-field-inline", DOM.label("Format:"), dd_export_fmt_slv),
                     DOM.div(class="cm-export-btns", btn_export_mddf_slv, btn_export_cn_slv),
@@ -519,20 +528,53 @@ function gui(;
         fig3_cn = Figure(; size=(900, 295))
         ax_rc_cn = Axis(fig3_cn[1, 1]; xticklabelsize=9, yticklabelsize=11)
         tf_rc_sel = Bonito.TextField("protein")
-        tf_dmin = Bonito.NumberInput(1.5)
-        tf_dmax = Bonito.NumberInput(3.5)
         btn_rc_update = Bonito.Button("Update")
 
-        btn_export_csv_rc = Bonito.Button("Export data (CSV)")
-        last_rc_data      = Observable{Any}(nothing)
+        btn_export_csv_rc  = Bonito.Button("Export data (CSV)")
+        dd_export_fmt_rc   = Bonito.Dropdown(["svg", "pdf", "png"])
+        btn_export_mddf_rc = Bonito.Button("Export MDDF plot")
+        btn_export_cn_rc   = Bonito.Button("Export CN plot")
+        tf_rc_xmin = Bonito.NumberInput(0.0)
+        tf_rc_xmax = Bonito.NumberInput(100.0)
+        tf_rc_ymin = Bonito.NumberInput(1.5)
+        tf_rc_ymax = Bonito.NumberInput(3.5)
+        btn_rc_lims = Bonito.Button("Apply")
+        last_rc_data = Observable{Any}(nothing)
 
-        tab3_controls = DOM.div(
-            DOM.div(class="cm-row", DOM.label("Selection:"), tf_rc_sel),
-            DOM.div(class="cm-lims-row", style="justify-content: center;",
-                DOM.span("dmin:"), tf_dmin,
-                DOM.span("dmax:"), tf_dmax,
-                btn_rc_update,
-                btn_export_csv_rc,
+        tab3_body = DOM.div(class="cm-tab2-body",
+            DOM.div(
+                DOM.div(class="cm-fig-wrap",
+                    DOM.div(class="cm-plot-title", "Residue Contributions to MDDF"),
+                    DOM.div(class="cm-fig-row",
+                        DOM.span(class="cm-ylabel", "r (Angstrom)"),
+                        fig3_mddf,
+                    ),
+                ),
+                DOM.div(class="cm-fig-wrap",
+                    DOM.div(class="cm-plot-title", "Residue Contributions to Coordination Number"),
+                    DOM.div(class="cm-fig-row",
+                        DOM.span(class="cm-ylabel", "r (Angstrom)"),
+                        fig3_cn,
+                    ),
+                ),
+                DOM.div(class="cm-xlabel", "Residue"),
+            ),
+            DOM.div(class="cm-grp-panel",
+                DOM.div(class="cm-row cm-row-left", DOM.label("Selection:"), tf_rc_sel),
+                DOM.div(style="text-align: center; margin: 4px 0;", btn_rc_update),
+                DOM.div(class="cm-export-section",
+                    DOM.div(class="cm-grp-panel-title", "Limits"),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_rc_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_rc_xmax)),
+                    DOM.div(class="cm-lims-row",
+                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_rc_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_rc_ymax)),
+                    DOM.div(class="cm-export-btns", btn_rc_lims),
+                    DOM.hr(class="cm-advanced-sep"),
+                    DOM.div(class="cm-grp-panel-title", "Export"),
+                    DOM.div(class="cm-export-field-inline", DOM.label("Format:"), dd_export_fmt_rc),
+                    DOM.div(class="cm-export-btns", btn_export_mddf_rc, btn_export_cn_rc),
+                    DOM.div(class="cm-export-btns", btn_export_csv_rc),
+                ),
             ),
         )
 
@@ -584,23 +626,7 @@ function gui(;
             ),
             DOM.div(class="cm-tab-content", tab_sol_body),
             DOM.div(class="cm-tab-content", tab_slv_body),
-            DOM.div(class="cm-tab-content", tab3_controls,
-                DOM.div(class="cm-fig-wrap",
-                    DOM.div(class="cm-plot-title", "Residue Contributions to MDDF"),
-                    DOM.div(class="cm-fig-row",
-                        DOM.span(class="cm-ylabel", "r (Angstrom)"),
-                        fig3_mddf,
-                    ),
-                ),
-                DOM.div(class="cm-fig-wrap",
-                    DOM.div(class="cm-plot-title", "Residue Contributions to Coordination Number"),
-                    DOM.div(class="cm-fig-row",
-                        DOM.span(class="cm-ylabel", "r (Angstrom)"),
-                        fig3_cn,
-                    ),
-                ),
-                DOM.div(class="cm-xlabel", "Residue"),
-            ),
+            DOM.div(class="cm-tab-content", tab3_body),
             tab_switch_js,
         )
 
@@ -1073,8 +1099,8 @@ function gui(;
             at === nothing && (status_obs[] = "Load a PDB file first"; return)
 
             sel_str = String(tf_rc_sel.value[])
-            dmin = Float64(tf_dmin.value[])
-            dmax = Float64(tf_dmax.value[])
+            dmin = Float64(tf_rc_ymin.value[])
+            dmax = Float64(tf_rc_ymax.value[])
 
             status_obs[] = "Computing residue contributions…"
             try
@@ -1143,6 +1169,24 @@ function gui(;
             catch e
                 status_obs[] = "Error: $(sprint(showerror, e))"
             end
+        end
+
+        # ── Tab 4 (RC): apply limits ──────────────────────────────────
+        on(btn_rc_lims.value) do _
+            xlo = round(Int, tf_rc_xmin.value[]); xhi = round(Int, tf_rc_xmax.value[])
+            xlims!(ax_rc_mddf, xlo, xhi); xlims!(ax_rc_cn, xlo, xhi)
+            # y-limits are dmin/dmax — recompute the plot
+            notify(btn_rc_update.value)
+        end
+
+        # ── Tab 4 (RC): export figures ────────────────────────────────
+        on(btn_export_mddf_rc.value) do _
+            last_rc_data[] === nothing && (status_obs[] = "No data to export — run Update first"; return)
+            _export_fig(fig3_mddf, ax_rc_mddf, "r (Angstrom)", "Residue", "Residue Contributions to MDDF", String(dd_export_fmt_rc.value[]))
+        end
+        on(btn_export_cn_rc.value) do _
+            last_rc_data[] === nothing && (status_obs[] = "No data to export — run Update first"; return)
+            _export_fig(fig3_cn, ax_rc_cn, "r (Angstrom)", "Residue", "Residue Contributions to Coordination Number", String(dd_export_fmt_rc.value[]))
         end
 
         # Trigger initial plot if data was preloaded

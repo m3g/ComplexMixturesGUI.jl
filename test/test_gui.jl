@@ -1,7 +1,7 @@
 import Pkg
 using ComplexMixturesGUI
-dir=@__DIR__
+dir=ComplexMixturesGUI.src_dir
 gui(;
-    pdbfile="$dir/system.pdb",
-    result="$dir/glyc50_results.json"
+    pdbfile="$dir/../test/system.pdb",
+    result="$dir/../test/glyc50_results.json"
 )
