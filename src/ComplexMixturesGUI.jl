@@ -5,7 +5,7 @@ using CairoMakie: CairoMakie
 using Bonito
 using Bonito: DOM
 using ComplexMixtures
-using ComplexMixtures: Result, Options, AtomSelection, mddf,
+using ComplexMixtures: Result,
     SoluteGroup, SolventGroup, ResidueContributions,
     contributions, overview, Overview,
     _set_clims_and_colorscale!
@@ -18,7 +18,7 @@ export gui
 # Base src directory
 const src_dir = @__DIR__
 
-function get_solvent_selection(atoms::AbstractVector{<:Atom}, result::Result) 
+function guess_solvent_selection(atoms::AbstractVector{<:Atom}, result::Result) 
     res = collect(eachresidue(atoms))
     solvent_selection = "water"
     for rs in res
@@ -32,7 +32,7 @@ function get_solvent_selection(atoms::AbstractVector{<:Atom}, result::Result)
     end
     return solvent_selection
 end
-get_solvent_selection(atoms, result) = "water"
+guess_solvent_selection(atoms, result) = "water"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Native file dialog helper (runs server-side)
@@ -148,9 +148,9 @@ input, select, textarea { font-size: 12px !important; }
 .cm-lims-row span { color: #666; font-size: 10px; }
 .cm-lims-row input[type=number] { width: 50px; font-size: 10px; padding: 1px 3px; }
 .cm-lims-row button { font-size: 10px; padding: 2px 6px; }
-.cm-lims-input { flex: 0 0 82px; width: 82px; min-width: 0; }
-.cm-lims-input > * { width: 82px !important; max-width: 82px !important; min-width: 0 !important; box-sizing: border-box !important; }
-.cm-lims-input input { width: 82px !important; max-width: 82px !important; font-size: 10px !important; padding: 1px 3px !important; box-sizing: border-box !important; }
+.cm-lims-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 3px; margin: 3px 0; font-size: 10px; }
+.cm-lims-grid span { color: #666; font-size: 10px; white-space: nowrap; }
+.cm-lims-grid input { width: 100% !important; min-width: 0 !important; font-size: 10px !important; padding: 1px 3px !important; box-sizing: border-box !important; }
 .cm-overview { font-family: 'Cascadia Mono', 'Consolas', monospace; font-size: 11px; white-space: pre-wrap; padding: 6px;
                border: 1px solid #ddd; border-radius: 4px; background: #fff; max-height: 400px; overflow-y: auto; }
 .cm-overview table { border-collapse: collapse; width: 100%; font-size: 11px; }
@@ -229,120 +229,35 @@ function gui(;
         atoms_obs = Observable{Union{Nothing,Vector{Atom}}}(nothing)
         status_obs = Observable("Ready")
         overview_obs = Observable("No results loaded.")
-        computing = Observable(false)
 
-        # ── Preload if provided ────────────────────────────────────────
-        if !isnothing(result)
-            result_obs[] = ComplexMixtures.load(result)
-        end
-        if !isnothing(pdbfile)
-            atoms_obs[] = read_pdb(pdbfile)
-        end
+        # (preload happens after all callbacks are defined, see below)
 
         # ══════════════════════════════════════════════════════════════
-        # LEFT PANEL — with two subtabs: "Setup / Run" and "Load / Results"
+        # LEFT PANEL
         # ══════════════════════════════════════════════════════════════
 
-        # ── Shared PDB widget (appears in both tabs) ─────────────────
-        tf_pdb = Bonito.TextField(isnothing(pdbfile) ? "" : pdbfile)
-        btn_browse_pdb = Bonito.Button("📂")
-
-        # ── Setup / Run subtab widgets ─────────────────────────────────
-        tf_traj = Bonito.TextField("")
-        btn_browse_traj = Bonito.Button("📂")
-        tf_solute = Bonito.TextField("protein")
-        dd_solute_opt = Bonito.Dropdown(["nmols", "natomspermol"])
-        tf_solute_n = Bonito.TextField("1")
-        tf_solvent = Bonito.TextField("resname TMAO")
-        dd_solvent_opt = Bonito.Dropdown(["natomspermol", "nmols"])
-        tf_solvent_n = Bonito.TextField("14")
-
-        # Options
-        tf_bulk_min = Bonito.NumberInput(8.0)
-        tf_bulk_max = Bonito.NumberInput(12.0)
-        tf_binstep = Bonito.NumberInput(0.02)
-        tf_stride = Bonito.TextField("1")
-        tf_firstframe = Bonito.TextField("1")
-        tf_lastframe = Bonito.TextField("-1")
-        tf_nrandom = Bonito.TextField("10")
-        tf_seed = Bonito.TextField("321")
-
-        cb_silent = Bonito.Checkbox(false)
-        cb_gc = Bonito.Checkbox(true)
-        cb_stablerng = Bonito.Checkbox(false)
-
-        btn_run = Bonito.Button("Run MDDF")
-
-        setup_content = DOM.div(
-            DOM.div(class="cm-row", DOM.label("Trajectory:"), tf_traj, DOM.div(class="cm-browse-btn", btn_browse_traj)),
-            DOM.div(class="cm-section-title", "Atom Selections"),
-            DOM.div(class="cm-row cm-row-left", DOM.label("Solute:"), tf_solute),
-            DOM.div(class="cm-row-compact", dd_solute_opt, tf_solute_n),
-            DOM.div(class="cm-row cm-row-left", DOM.label("Solvent:"), tf_solvent),
-            DOM.div(class="cm-row-compact", dd_solvent_opt, tf_solvent_n),
-            DOM.div(class="cm-section-title", "Options"),
-            DOM.div(class="cm-row", DOM.label("bulk from (Å):"), tf_bulk_min),
-            DOM.div(class="cm-row", DOM.label("bulk to (Å):"), tf_bulk_max),
-            DOM.div(class="cm-row", DOM.label("binstep (Å):"), tf_binstep),
-            DOM.div(class="cm-row", DOM.label("stride:"), tf_stride),
-            DOM.div(class="cm-row", DOM.label("first frame:"), tf_firstframe),
-            DOM.div(class="cm-row", DOM.label("last frame:"), tf_lastframe),
-            DOM.div(class="cm-row", DOM.label("n_random:"), tf_nrandom),
-            DOM.div(class="cm-row", DOM.label("seed:"), tf_seed),
-            DOM.div(style="text-align:center; margin: 8px 0;", btn_run),
-            DOM.hr(class="cm-advanced-sep"),
-            DOM.div(class="cm-toggle-row",
-                cb_silent, "Silent", cb_gc, "GC", cb_stablerng, "StableRNG"),
-        )
-
-        # ── Load / Results subtab widgets ──────────────────────────────
+        tf_pdb  = Bonito.TextField(isnothing(pdbfile) ? "" : pdbfile)
+        btn_browse_pdb  = Bonito.Button("📂")
         tf_json = Bonito.TextField(isnothing(result) ? "" : result)
         btn_browse_json = Bonito.Button("📂")
-        btn_load = Bonito.Button("Load JSON")
+        btn_load = Bonito.Button("Load")
 
-        tf_save_path = Bonito.TextField("")
-        btn_browse_save = Bonito.Button("📂")
-        btn_save = Bonito.Button("Save Result to JSON")
-
-        results_content = DOM.div(
-            DOM.div(class="cm-section-title", "Load Result"),
-            DOM.div(class="cm-row cm-required", DOM.label("JSON file:"), tf_json, DOM.div(class="cm-browse-btn", btn_browse_json)),
-            DOM.div(style="text-align:center; margin: 6px 0;", btn_load),
-            DOM.div(class="cm-section-title", "Save Result"),
-            DOM.div(class="cm-row", DOM.label("Save as:"), tf_save_path, DOM.div(class="cm-browse-btn", btn_browse_save)),
-            DOM.div(style="text-align:center; margin: 6px 0;", btn_save),
-            DOM.div(class="cm-section-title", "Result Overview"),
-            DOM.div(class="cm-overview", overview_obs),
-        )
-
-        # ── Sidebar tabs JS switching ──────────────────────────────────
-        sidebar_tabs_js = DOM.script("""
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(function() {
-                var sbtns = document.querySelectorAll('.cm-sidebar-tab');
-                var stabs = document.querySelectorAll('.cm-sidebar-content');
-                sbtns.forEach(function(b, i) {
-                    b.addEventListener('click', function() {
-                        sbtns.forEach(function(bb) { bb.classList.remove('active'); });
-                        stabs.forEach(function(tt) { tt.classList.remove('active'); });
-                        b.classList.add('active');
-                        stabs[i].classList.add('active');
-                    });
-                });
-            }, 500);
-        });
-        """)
+        # Solute / solvent selection fields (also used in contributions tabs)
+        _initial_solvent = isnothing(result_obs[]) ? "water" :
+            guess_solvent_selection(something(atoms_obs[], Atom[]), result_obs[])
+        tf_comp_sol = Bonito.TextField("protein")
+        tf_comp_slv = Bonito.TextField(_initial_solvent)
 
         sidebar = DOM.div(class="cm-sidebar",
-            DOM.div(class="cm-section-title", "Structure File"),
+            DOM.div(class="cm-section-title", "Input Files"),
             DOM.div(class="cm-row cm-required", DOM.label("PDB / mmCIF:"), tf_pdb, DOM.div(class="cm-browse-btn", btn_browse_pdb)),
-            DOM.div(class="cm-sidebar-tabs",
-                DOM.div(class="cm-sidebar-tab active", "Setup / Run"),
-                DOM.div(class="cm-sidebar-tab", "Load / Results"),
-            ),
-            DOM.div(class="cm-sidebar-content active", setup_content),
-            DOM.div(class="cm-sidebar-content", results_content),
-            sidebar_tabs_js,
+            DOM.div(class="cm-row cm-required", DOM.label("Results JSON:"), tf_json, DOM.div(class="cm-browse-btn", btn_browse_json)),
+            DOM.div(style="text-align:center; margin: 6px 0;", btn_load),
+            DOM.div(class="cm-section-title", "Selections"),
+            DOM.div(class="cm-row", DOM.label("Solute:"), tf_comp_sol),
+            DOM.div(class="cm-row", DOM.label("Solvent:"), tf_comp_slv),
+            DOM.div(class="cm-section-title", "Result Overview"),
+            DOM.div(class="cm-overview", overview_obs),
         )
 
         # ══════════════════════════════════════════════════════════════
@@ -355,30 +270,16 @@ function gui(;
         fig1_kb = Figure(; size=(900, 295))
         ax_kb = Axis(fig1_kb[1, 1]; xticklabelsize=11, yticklabelsize=11)
 
-        # Tab 1 limits (below the plots)
-        tf_mddf_xmin = Bonito.NumberInput(0.0)
-        tf_mddf_xmax = Bonito.NumberInput(10.0)
-        tf_mddf_ymin = Bonito.NumberInput(0.0)
-        tf_mddf_ymax = Bonito.NumberInput(5.0)
-        btn_mddf_lims = Bonito.Button("Apply")
-        tf_kb_xmin = Bonito.NumberInput(0.0)
-        tf_kb_xmax = Bonito.NumberInput(10.0)
-        tf_kb_ymin = Bonito.NumberInput(-1.0)
-        tf_kb_ymax = Bonito.NumberInput(1.0)
-        btn_kb_lims = Bonito.Button("Apply")
-
-        tab1_limits = DOM.div(
-            DOM.div(class="cm-lims-row",
-                DOM.span("MDDF:"),
-                DOM.span("x:"), tf_mddf_xmin, DOM.span("–"), tf_mddf_xmax,
-                DOM.span("y:"), tf_mddf_ymin, DOM.span("–"), tf_mddf_ymax,
-                btn_mddf_lims),
-            DOM.div(class="cm-lims-row",
-                DOM.span("KB:"),
-                DOM.span("x:"), tf_kb_xmin, DOM.span("–"), tf_kb_xmax,
-                DOM.span("y:"), tf_kb_ymin, DOM.span("–"), tf_kb_ymax,
-                btn_kb_lims),
-        )
+        # Tab 1 limits and export
+        tf_mddf_xmin  = Bonito.NumberInput(0.0)
+        tf_mddf_xmax  = Bonito.NumberInput(10.0)
+        tf_mddf_ymin  = Bonito.NumberInput(0.0)
+        tf_mddf_ymax  = Bonito.NumberInput(5.0)
+        tf_kb_xmin    = Bonito.NumberInput(0.0)
+        tf_kb_xmax    = Bonito.NumberInput(10.0)
+        tf_kb_ymin    = Bonito.NumberInput(-1.0)
+        tf_kb_ymax    = Bonito.NumberInput(1.0)
+        btn_tab1_lims = Bonito.Button("Apply")
         dd_export_fmt1   = Bonito.Dropdown(["svg", "pdf", "png"])
         btn_export_mddf1 = Bonito.Button("Export MDDF plot")
         btn_export_kb1   = Bonito.Button("Export KB plot")
@@ -401,7 +302,6 @@ function gui(;
         ax_slv_cn = Axis(fig_slv_cn[1, 1]; xticklabelsize=11, yticklabelsize=11)
 
         # Solute group state
-        tf_comp_sol = Bonito.TextField("protein")
         tf_newgrp_sol = Bonito.TextField("resname ARG LYS")
         btn_addgrp_sol = Bonito.Button("Add")
         btn_rmgrp_sol = Bonito.Button("Remove unchecked")
@@ -412,11 +312,6 @@ function gui(;
         grp_total_sol = Bonito.Checkbox(true)
 
         # Solvent group state
-        
-        # Try to guess which residue is the solvent
-        solvent_selection = get_solvent_selection(atoms_obs[], result_obs[])
-
-        tf_comp_slv = Bonito.TextField(solvent_selection)
         tf_newgrp_slv = Bonito.TextField("element O")
         btn_addgrp_slv = Bonito.Button("Add")
         btn_rmgrp_slv = Bonito.Button("Remove unchecked")
@@ -442,11 +337,19 @@ function gui(;
             DOM.div(class="cm-grp-list", rows...)
         end
 
-        # Group limits (shared)
-        tf_grp_xmin = Bonito.NumberInput(0.0)
-        tf_grp_xmax = Bonito.NumberInput(10.0)
-        tf_grp_ymin = Bonito.NumberInput(0.0)
-        tf_grp_ymax = Bonito.NumberInput(5.0)
+        # Group limits — all separate per tab (DOM nodes cannot be shared)
+        tf_sol_xmin      = Bonito.NumberInput(0.0)
+        tf_sol_xmax      = Bonito.NumberInput(10.0)
+        tf_sol_mddf_ymin = Bonito.NumberInput(0.0)
+        tf_sol_mddf_ymax = Bonito.NumberInput(5.0)
+        tf_sol_cn_ymin   = Bonito.NumberInput(0.0)
+        tf_sol_cn_ymax   = Bonito.NumberInput(5.0)
+        tf_slv_xmin      = Bonito.NumberInput(0.0)
+        tf_slv_xmax      = Bonito.NumberInput(10.0)
+        tf_slv_mddf_ymin = Bonito.NumberInput(0.0)
+        tf_slv_mddf_ymax = Bonito.NumberInput(5.0)
+        tf_slv_cn_ymin   = Bonito.NumberInput(0.0)
+        tf_slv_cn_ymax   = Bonito.NumberInput(5.0)
         btn_grp_lims_sol = Bonito.Button("Apply")
         btn_grp_lims_slv = Bonito.Button("Apply")
 
@@ -483,17 +386,18 @@ function gui(;
                 DOM.div(class="cm-xlabel", "r (Angstrom)"),
             ),
             DOM.div(class="cm-grp-panel",
-                DOM.div(class="cm-row cm-row-left", DOM.label("Solute:"), tf_comp_sol),
                 DOM.div(class="cm-grp-panel-title", "Groups"),
                 DOM.div(class="cm-lims-row", tf_newgrp_sol, btn_addgrp_sol),
                 checklist_sol_dom,
                 DOM.div(style="margin: 4px 0;", btn_rmgrp_sol),
                 DOM.div(class="cm-export-section",
                     DOM.div(class="cm-grp-panel-title", "Limits"),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_grp_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_xmax)),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_grp_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_ymax)),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("x:"), tf_sol_xmin, DOM.span("–"), tf_sol_xmax),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("MDDF y:"), tf_sol_mddf_ymin, DOM.span("–"), tf_sol_mddf_ymax),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("CN y:"), tf_sol_cn_ymin, DOM.span("–"), tf_sol_cn_ymax),
                     DOM.div(class="cm-export-btns", btn_grp_lims_sol),
                     DOM.hr(class="cm-advanced-sep"),
                     DOM.div(class="cm-grp-panel-title", "Export"),
@@ -523,17 +427,18 @@ function gui(;
                 DOM.div(class="cm-xlabel", "r (Angstrom)"),
             ),
             DOM.div(class="cm-grp-panel",
-                DOM.div(class="cm-row cm-row-left", DOM.label("Solvent:"), tf_comp_slv),
                 DOM.div(class="cm-grp-panel-title", "Groups"),
                 DOM.div(class="cm-lims-row", tf_newgrp_slv, btn_addgrp_slv),
                 checklist_slv_dom,
                 DOM.div(style="margin: 4px 0;", btn_rmgrp_slv),
                 DOM.div(class="cm-export-section",
                     DOM.div(class="cm-grp-panel-title", "Limits"),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_grp_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_xmax)),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_grp_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_grp_ymax)),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("x:"), tf_slv_xmin, DOM.span("–"), tf_slv_xmax),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("MDDF y:"), tf_slv_mddf_ymin, DOM.span("–"), tf_slv_mddf_ymax),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("CN y:"), tf_slv_cn_ymin, DOM.span("–"), tf_slv_cn_ymax),
                     DOM.div(class="cm-export-btns", btn_grp_lims_slv),
                     DOM.hr(class="cm-advanced-sep"),
                     DOM.div(class="cm-grp-panel-title", "Export"),
@@ -586,10 +491,10 @@ function gui(;
                 DOM.div(style="text-align: center; margin: 4px 0;", btn_rc_plot),
                 DOM.div(class="cm-export-section",
                     DOM.div(class="cm-grp-panel-title", "Limits"),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("x:"), DOM.div(class="cm-lims-input", tf_rc_xmin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_rc_xmax)),
-                    DOM.div(class="cm-lims-row",
-                        DOM.span("y:"), DOM.div(class="cm-lims-input", tf_rc_ymin), DOM.span("–"), DOM.div(class="cm-lims-input", tf_rc_ymax)),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("x:"), tf_rc_xmin, DOM.span("–"), tf_rc_xmax),
+                    DOM.div(class="cm-lims-grid",
+                        DOM.span("y:"), tf_rc_ymin, DOM.span("–"), tf_rc_ymax),
                     DOM.div(class="cm-export-btns", btn_rc_lims),
                     DOM.hr(class="cm-advanced-sep"),
                     DOM.div(class="cm-grp-panel-title", "Export"),
@@ -626,25 +531,44 @@ function gui(;
                 DOM.div(class="cm-tab-btn", "Residue Contributions"),
             ),
             DOM.div(class="cm-tab-content active",
-                DOM.div(class="cm-fig-wrap",
-                    DOM.div(class="cm-plot-title", "MDDF"),
-                    DOM.div(class="cm-fig-row",
-                        DOM.span(class="cm-ylabel", "MDDF(r)"),
-                        fig1_mddf,
+                DOM.div(class="cm-tab2-body",
+                    DOM.div(
+                        DOM.div(class="cm-fig-wrap",
+                            DOM.div(class="cm-plot-title", "MDDF"),
+                            DOM.div(class="cm-fig-row",
+                                DOM.span(class="cm-ylabel", "MDDF(r)"),
+                                fig1_mddf,
+                            ),
+                        ),
+                        DOM.div(class="cm-fig-wrap",
+                            DOM.div(class="cm-plot-title", "Kirkwood-Buff Integral"),
+                            DOM.div(class="cm-fig-row",
+                                DOM.span(class="cm-ylabel", "KB (L/mol)"),
+                                fig1_kb,
+                            ),
+                        ),
+                        DOM.div(class="cm-xlabel", "r (Angstrom)"),
+                    ),
+                    DOM.div(class="cm-grp-panel",
+                        DOM.div(class="cm-export-section",
+                            DOM.div(class="cm-grp-panel-title", "Limits"),
+                            DOM.div(class="cm-lims-grid",
+                                DOM.span("MDDF x:"), tf_mddf_xmin, DOM.span("–"), tf_mddf_xmax),
+                            DOM.div(class="cm-lims-grid",
+                                DOM.span("MDDF y:"), tf_mddf_ymin, DOM.span("–"), tf_mddf_ymax),
+                            DOM.div(class="cm-lims-grid",
+                                DOM.span("KB x:"), tf_kb_xmin, DOM.span("–"), tf_kb_xmax),
+                            DOM.div(class="cm-lims-grid",
+                                DOM.span("KB y:"), tf_kb_ymin, DOM.span("–"), tf_kb_ymax),
+                            DOM.div(class="cm-export-btns", btn_tab1_lims),
+                            DOM.hr(class="cm-advanced-sep"),
+                            DOM.div(class="cm-grp-panel-title", "Export"),
+                            DOM.div(class="cm-export-field-inline", DOM.label("Format:"), dd_export_fmt1),
+                            DOM.div(class="cm-export-btns", btn_export_mddf1, btn_export_kb1),
+                            DOM.div(class="cm-export-btns", btn_export_csv1),
+                        ),
                     ),
                 ),
-                DOM.div(class="cm-fig-wrap",
-                    DOM.div(class="cm-plot-title", "Kirkwood-Buff Integral"),
-                    DOM.div(class="cm-fig-row",
-                        DOM.span(class="cm-ylabel", "KB (L/mol)"),
-                        fig1_kb,
-                    ),
-                ),
-                DOM.div(class="cm-xlabel", "r (Angstrom)"),
-                tab1_limits,
-                DOM.div(class="cm-lims-row", style="justify-content: center; margin-top: 4px;",
-                    DOM.label("Format:"), dd_export_fmt1,
-                    btn_export_mddf1, btn_export_kb1, btn_export_csv1),
             ),
             DOM.div(class="cm-tab-content", tab_sol_body),
             DOM.div(class="cm-tab-content", tab_slv_body),
@@ -665,17 +589,9 @@ function gui(;
                 tf_pdb.value[] = path
             end
         end
-        on(btn_browse_traj.value) do _
-            path = _pick_file(; title="Select trajectory file")
-            isempty(path) || (tf_traj.value[] = path)
-        end
         on(btn_browse_json.value) do _
             path = _pick_file(; title="Select JSON result file")
             isempty(path) || (tf_json.value[] = path)
-        end
-        on(btn_browse_save.value) do _
-            path = _pick_save_file(; title="Save result JSON")
-            isempty(path) || (tf_save_path.value[] = path)
         end
 
         # ── Group management ───────────────────────────────────────────
@@ -743,130 +659,78 @@ function gui(;
             grp_active_slv[] = length(kept_names)
         end
 
-        # ── Load JSON ──────────────────────────────────────────────────
-        on(btn_load.value) do _
-            path = String(tf_json.value[])
-            if isempty(path) || !isfile(path)
-                status_obs[] = "File not found: $path"; return
-            end
-            try
-                result_obs[] = ComplexMixtures.load(path)
-                pdb_path = String(tf_pdb.value[])
-                if !isempty(pdb_path) && isfile(pdb_path)
-                    atoms_obs[] = read_pdb(pdb_path)
-                end
-                status_obs[] = "Loaded: $path"
-            catch e
-                status_obs[] = "Error: $(sprint(showerror, e))"
-            end
-        end
-
-        # ── Save Result ────────────────────────────────────────────────
-        on(btn_save.value) do _
-            R = result_obs[]
-            if R === nothing
-                status_obs[] = "No results to save"; return
-            end
-            path = String(tf_save_path.value[])
-            if isempty(path)
-                status_obs[] = "Enter a file path for saving"; return
-            end
-            try
-                ComplexMixtures.save(path, R)
-                status_obs[] = "Saved: $path"
-            catch e
-                status_obs[] = "Error saving: $(sprint(showerror, e))"
-            end
-        end
-
-        # ── Run MDDF ───────────────────────────────────────────────────
-        on(btn_run.value) do _
-            computing[] && return
-            pdb_path = String(tf_pdb.value[])
-            traj_path = String(tf_traj.value[])
-            if isempty(pdb_path) || !isfile(pdb_path)
-                status_obs[] = "PDB file not found: $pdb_path"; return
-            end
-            if isempty(traj_path) || !isfile(traj_path)
-                status_obs[] = "Trajectory not found: $traj_path"; return
-            end
-            computing[] = true
-            status_obs[] = "Computing MDDF…"
-            Threads.@spawn begin
-                try
-                    all_atoms = read_pdb(pdb_path)
-                    atoms_obs[] = all_atoms
-                    solute_sel = String(tf_solute.value[])
-                    solvent_sel = String(tf_solvent.value[])
-                    solute_atoms = select(all_atoms, solute_sel)
-                    solvent_atoms = select(all_atoms, solvent_sel)
-                    solute_opt = String(dd_solute_opt.value[])
-                    solvent_opt = String(dd_solvent_opt.value[])
-                    solute_n = parse(Int, strip(String(tf_solute_n.value[])))
-                    solvent_n = parse(Int, strip(String(tf_solvent_n.value[])))
-                    solute_kw = solute_opt == "nmols" ? (; nmols=solute_n) : (; natomspermol=solute_n)
-                    solvent_kw = solvent_opt == "nmols" ? (; nmols=solvent_n) : (; natomspermol=solvent_n)
-                    solute = AtomSelection(solute_atoms; solute_kw...)
-                    solvent = AtomSelection(solvent_atoms; solvent_kw...)
-                    opts = Options(;
-                        binstep=Float64(tf_binstep.value[]),
-                        bulk_range=(Float64(tf_bulk_min.value[]), Float64(tf_bulk_max.value[])),
-                        firstframe=parse(Int, tf_firstframe.value[]),
-                        lastframe=parse(Int, tf_lastframe.value[]),
-                        stride=parse(Int, tf_stride.value[]),
-                        n_random_samples=parse(Int, tf_nrandom.value[]),
-                        seed=parse(Int, tf_seed.value[]),
-                        silent=false,
-                        GC=true,
-                        StableRNG=false,
-                    )
-                    R = mddf(traj_path, solute, solvent, opts)
-                    result_obs[] = R
-                    status_obs[] = "Computation complete!"
-                catch e
-                    status_obs[] = "Error: $(sprint(showerror, e))"
-                finally
-                    computing[] = false
-                end
-            end
-        end
-
-        # ── Tab 1: auto-update on result change ───────────────────────
-        on(result_obs) do R
-            R === nothing && return
-            empty!(ax_mddf)
-            empty!(ax_kb)
-            for c in copy(fig1_mddf.content)
-                c isa Legend && delete!(c)
-            end
-            for c in copy(fig1_kb.content)
-                c isa Legend && delete!(c)
-            end
+        # ── Full UI reset (called on every load) ──────────────────────
+        function _reset_ui!(R)
+            # ── Tab 1: MDDF & KB ──────────────────────────────────────
+            empty!(ax_mddf); empty!(ax_kb)
+            for c in copy(fig1_mddf.content); c isa Legend && delete!(c); end
+            for c in copy(fig1_kb.content);   c isa Legend && delete!(c); end
             lines!(ax_mddf, R.d, R.mddf; color=:dodgerblue, linewidth=1.5, label="MDDF")
             hlines!(ax_mddf, [1.0]; color=:gray60, linestyle=:dash)
             axislegend(ax_mddf; position=:rt, labelsize=10)
             lines!(ax_kb, R.d, R.kb ./ 1000; color=:orangered, linewidth=1.5, label="KB integral")
             axislegend(ax_kb; position=:rt, labelsize=10)
-            # Update overview text
+            last_tab1_data[] = (d=copy(R.d), mddf=copy(R.mddf), kb=copy(R.kb ./ 1000))
             try
                 overview_obs[] = _overview_text(R)
             catch
                 overview_obs[] = "Overview unavailable."
             end
-            last_tab1_data[] = (d=copy(R.d), mddf=copy(R.mddf), kb=copy(R.kb ./ 1000))
-            status_obs[] = "Plots updated"
+
+            # ── Tab 2 & 3: clear group contribution plots and group lists ──
+            for ax in (ax_sol_mddf, ax_sol_cn, ax_slv_mddf, ax_slv_cn)
+                empty!(ax)
+            end
+            for fig in (fig_sol_mddf, fig_sol_cn, fig_slv_mddf, fig_slv_cn)
+                for c in copy(fig.content); c isa Legend && delete!(c); end
+            end
+            grp_active_sol[] = 0
+            grp_active_slv[] = 0
+            for i in 1:MAX_GROUPS
+                grp_names_sol[i][]  = ""; grp_labels_sol[i][] = ""
+                grp_names_slv[i][]  = ""; grp_labels_slv[i][] = ""
+                grp_checks_sol[i].value[] = true
+                grp_checks_slv[i].value[] = true
+            end
+            last_sol_data[] = nothing
+            last_slv_data[] = nothing
+
+            # ── Tab 4: clear residue contribution plots ────────────────
+            empty!(ax_rc_mddf); empty!(ax_rc_cn)
+            last_rc_data[] = nothing
         end
 
-        # ── Tab 1: MDDF limits ────────────────────────────────────────
-        on(btn_mddf_lims.value) do _
+        # ── Load JSON ──────────────────────────────────────────────────
+        on(btn_load.value) do _
+            json_path = strip(String(tf_json.value[]))
+            pdb_path  = strip(String(tf_pdb.value[]))
+            if isempty(json_path) || !isfile(json_path)
+                status_obs[] = "JSON file not found: $json_path"; return
+            end
+            if isempty(pdb_path) || !isfile(pdb_path)
+                status_obs[] = "PDB file not found: $pdb_path"; return
+            end
+            status_obs[] = "Loading…"
+            try
+                R  = ComplexMixtures.load(json_path)
+                at = read_pdb(pdb_path)
+                slv_sel = guess_solvent_selection(at, R)
+                atoms_obs[] = at
+                result_obs[] = R
+                tf_comp_slv.value[] = slv_sel
+                _reset_ui!(R)
+                status_obs[] = "Loaded: $json_path"
+            catch e
+                status_obs[] = "Error: $(sprint(showerror, e))"
+            end
+        end
+
+        # ── Tab 1: limits ─────────────────────────────────────────────
+        on(btn_tab1_lims.value) do _
             xlims!(ax_mddf, Float64(tf_mddf_xmin.value[]), Float64(tf_mddf_xmax.value[]))
             ylims!(ax_mddf, Float64(tf_mddf_ymin.value[]), Float64(tf_mddf_ymax.value[]))
-        end
-
-        # ── Tab 1: KB limits ──────────────────────────────────────────
-        on(btn_kb_lims.value) do _
-            xlims!(ax_kb, Float64(tf_kb_xmin.value[]), Float64(tf_kb_xmax.value[]))
-            ylims!(ax_kb, Float64(tf_kb_ymin.value[]), Float64(tf_kb_ymax.value[]))
+            xlims!(ax_kb,   Float64(tf_kb_xmin.value[]),   Float64(tf_kb_xmax.value[]))
+            ylims!(ax_kb,   Float64(tf_kb_ymin.value[]),   Float64(tf_kb_ymax.value[]))
         end
 
         # ── Tab 2/3: group contributions ──────────────────────────────
@@ -1101,16 +965,16 @@ function gui(;
 
         # ── Tab 2/3: apply group limits ───────────────────────────────
         on(btn_grp_lims_sol.value) do _
-            xlo = Float64(tf_grp_xmin.value[]); xhi = Float64(tf_grp_xmax.value[])
-            ylo = Float64(tf_grp_ymin.value[]); yhi = Float64(tf_grp_ymax.value[])
-            xlims!(ax_sol_mddf, xlo, xhi); xlims!(ax_sol_cn, xlo, xhi)
-            ylims!(ax_sol_mddf, ylo, yhi); ylims!(ax_sol_cn, 0, nothing)
+            xlims!(ax_sol_mddf, Float64(tf_sol_xmin.value[]), Float64(tf_sol_xmax.value[]))
+            xlims!(ax_sol_cn,   Float64(tf_sol_xmin.value[]), Float64(tf_sol_xmax.value[]))
+            ylims!(ax_sol_mddf, Float64(tf_sol_mddf_ymin.value[]), Float64(tf_sol_mddf_ymax.value[]))
+            ylims!(ax_sol_cn,   Float64(tf_sol_cn_ymin.value[]),   Float64(tf_sol_cn_ymax.value[]))
         end
         on(btn_grp_lims_slv.value) do _
-            xlo = Float64(tf_grp_xmin.value[]); xhi = Float64(tf_grp_xmax.value[])
-            ylo = Float64(tf_grp_ymin.value[]); yhi = Float64(tf_grp_ymax.value[])
-            xlims!(ax_slv_mddf, xlo, xhi); xlims!(ax_slv_cn, xlo, xhi)
-            ylims!(ax_slv_mddf, ylo, yhi); ylims!(ax_slv_cn, 0, nothing)
+            xlims!(ax_slv_mddf, Float64(tf_slv_xmin.value[]), Float64(tf_slv_xmax.value[]))
+            xlims!(ax_slv_cn,   Float64(tf_slv_xmin.value[]), Float64(tf_slv_xmax.value[]))
+            ylims!(ax_slv_mddf, Float64(tf_slv_mddf_ymin.value[]), Float64(tf_slv_mddf_ymax.value[]))
+            ylims!(ax_slv_cn,   Float64(tf_slv_cn_ymin.value[]),   Float64(tf_slv_cn_ymax.value[]))
         end
 
         # ── Tab 3: residue contributions ──────────────────────────────
@@ -1211,16 +1075,28 @@ function gui(;
             _export_fig(fig3_cn, ax_rc_cn, "r (Angstrom)", "Residue", "Residue Contributions to Coordination Number", String(dd_export_fmt_rc.value[]))
         end
 
-        # Trigger initial plot if data was preloaded
-        if !isnothing(result_obs[])
-            notify(result_obs)
+        # ── Preload if provided ────────────────────────────────────────
+        if !isnothing(result) && !isnothing(pdbfile) &&
+                isfile(result) && isfile(pdbfile)
+            try
+                R  = ComplexMixtures.load(result)
+                at = read_pdb(pdbfile)
+                atoms_obs[] = at
+                result_obs[] = R
+                tf_comp_slv.value[] = guess_solvent_selection(at, R)
+                _reset_ui!(R)
+                status_obs[] = "Loaded: $result"
+            catch e
+                status_obs[] = "Error on preload: $(sprint(showerror, e))"
+            end
         end
 
         # ── Assemble page ─────────────────────────────────────────────
         _version = string(pkgversion(ComplexMixtures))
+        _version_gui = string(pkgversion(ComplexMixturesGUI))
         return DOM.div(
             _CSS,
-            DOM.div(class="cm-title", "ComplexMixtures v$(_version)"),
+            DOM.div(class="cm-title", "ComplexMixtures v$(_version) / ComplexMixturesGUI v$(_version_gui)"),
             DOM.div(class="cm-main", sidebar, plots_panel),
             status_bar,
         )
