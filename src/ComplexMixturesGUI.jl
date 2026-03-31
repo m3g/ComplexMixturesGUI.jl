@@ -9,13 +9,30 @@ using ComplexMixtures: Result, Options, AtomSelection, mddf,
     SoluteGroup, SolventGroup, ResidueContributions,
     contributions, overview, Overview,
     _set_clims_and_colorscale!
-import PDBTools
+#using PDBTools: Atom, select, read_pdb, eachresidue, residuename
+using PDBTools
 using Statistics: mean, std
 
 export gui
 
 # Base src directory
 const src_dir = @__DIR__
+
+function get_solvent_selection(atoms::AbstractVector{<:Atom}, result::Result) 
+    res = collect(eachresidue(atoms))
+    solvent_selection = "water"
+    for rs in res
+        if length(rs) == result.solvent.natomspermol
+            rname = resname(rs)
+            if count(r -> resname(r) == rname, res) == result.solvent.nmols
+                    solvent_selection = "resname $rname"
+                    break
+            end
+        end
+    end
+    return solvent_selection
+end
+get_solvent_selection(atoms, result) = "water"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Native file dialog helper (runs server-side)
@@ -209,7 +226,7 @@ function gui(;
     app = App() do session::Bonito.Session
         # ── State ──────────────────────────────────────────────────────
         result_obs = Observable{Union{Nothing,Result}}(nothing)
-        atoms_obs = Observable{Union{Nothing,Vector{PDBTools.Atom}}}(nothing)
+        atoms_obs = Observable{Union{Nothing,Vector{Atom}}}(nothing)
         status_obs = Observable("Ready")
         overview_obs = Observable("No results loaded.")
         computing = Observable(false)
@@ -219,7 +236,7 @@ function gui(;
             result_obs[] = ComplexMixtures.load(result)
         end
         if !isnothing(pdbfile)
-            atoms_obs[] = PDBTools.read_pdb(pdbfile)
+            atoms_obs[] = read_pdb(pdbfile)
         end
 
         # ══════════════════════════════════════════════════════════════
@@ -244,11 +261,11 @@ function gui(;
         tf_bulk_min = Bonito.NumberInput(8.0)
         tf_bulk_max = Bonito.NumberInput(12.0)
         tf_binstep = Bonito.NumberInput(0.02)
-        tf_stride = Bonito.NumberInput(1.0)
-        tf_firstframe = Bonito.NumberInput(1.0)
-        tf_lastframe = Bonito.NumberInput(-1.0)
-        tf_nrandom = Bonito.NumberInput(10.0)
-        tf_seed = Bonito.NumberInput(321.0)
+        tf_stride = Bonito.TextField("1")
+        tf_firstframe = Bonito.TextField("1")
+        tf_lastframe = Bonito.TextField("-1")
+        tf_nrandom = Bonito.TextField("10")
+        tf_seed = Bonito.TextField("321")
 
         cb_silent = Bonito.Checkbox(false)
         cb_gc = Bonito.Checkbox(true)
@@ -385,7 +402,7 @@ function gui(;
 
         # Solute group state
         tf_comp_sol = Bonito.TextField("protein")
-        tf_newgrp_sol = Bonito.TextField("resname ARG")
+        tf_newgrp_sol = Bonito.TextField("resname ARG LYS")
         btn_addgrp_sol = Bonito.Button("Add")
         btn_rmgrp_sol = Bonito.Button("Remove unchecked")
         grp_names_sol  = [Observable("") for _ in 1:MAX_GROUPS]
@@ -395,7 +412,11 @@ function gui(;
         grp_total_sol = Bonito.Checkbox(true)
 
         # Solvent group state
-        tf_comp_slv = Bonito.TextField("resname TMAO")
+        
+        # Try to guess which residue is the solvent
+        solvent_selection = get_solvent_selection(atoms_obs[], result_obs[])
+
+        tf_comp_slv = Bonito.TextField(solvent_selection)
         tf_newgrp_slv = Bonito.TextField("element O")
         btn_addgrp_slv = Bonito.Button("Add")
         btn_rmgrp_slv = Bonito.Button("Remove unchecked")
@@ -535,8 +556,8 @@ function gui(;
         dd_export_fmt_rc   = Bonito.Dropdown(["svg", "pdf", "png"])
         btn_export_mddf_rc = Bonito.Button("Export MDDF plot")
         btn_export_cn_rc   = Bonito.Button("Export CN plot")
-        tf_rc_xmin = Bonito.NumberInput(0.0)
-        tf_rc_xmax = Bonito.NumberInput(100.0)
+        tf_rc_xmin = Bonito.TextField("0")
+        tf_rc_xmax = Bonito.TextField("100")
         tf_rc_ymin = Bonito.NumberInput(1.5)
         tf_rc_ymax = Bonito.NumberInput(3.5)
         btn_rc_lims = Bonito.Button("Apply")
@@ -663,7 +684,7 @@ function gui(;
                 return sel
             end
             combined = isempty(strip(comp_sel)) ? sel : "($comp_sel) and ($sel)"
-            n_atoms = try length(PDBTools.select(at, combined)) catch; -1 end
+            n_atoms = try length(select(at, combined)) catch; -1 end
             n_atoms < 0 ? sel : "$sel ($n_atoms atoms)"
         end
 
@@ -732,7 +753,7 @@ function gui(;
                 result_obs[] = ComplexMixtures.load(path)
                 pdb_path = String(tf_pdb.value[])
                 if !isempty(pdb_path) && isfile(pdb_path)
-                    atoms_obs[] = PDBTools.read_pdb(pdb_path)
+                    atoms_obs[] = read_pdb(pdb_path)
                 end
                 status_obs[] = "Loaded: $path"
             catch e
@@ -773,12 +794,12 @@ function gui(;
             status_obs[] = "Computing MDDF…"
             Threads.@spawn begin
                 try
-                    all_atoms = PDBTools.read_pdb(pdb_path)
+                    all_atoms = read_pdb(pdb_path)
                     atoms_obs[] = all_atoms
                     solute_sel = String(tf_solute.value[])
                     solvent_sel = String(tf_solvent.value[])
-                    solute_atoms = PDBTools.select(all_atoms, solute_sel)
-                    solvent_atoms = PDBTools.select(all_atoms, solvent_sel)
+                    solute_atoms = select(all_atoms, solute_sel)
+                    solvent_atoms = select(all_atoms, solvent_sel)
                     solute_opt = String(dd_solute_opt.value[])
                     solvent_opt = String(dd_solvent_opt.value[])
                     solute_n = parse(Int, strip(String(tf_solute_n.value[])))
@@ -790,11 +811,11 @@ function gui(;
                     opts = Options(;
                         binstep=Float64(tf_binstep.value[]),
                         bulk_range=(Float64(tf_bulk_min.value[]), Float64(tf_bulk_max.value[])),
-                        firstframe=round(Int, tf_firstframe.value[]),
-                        lastframe=round(Int, tf_lastframe.value[]),
-                        stride=round(Int, tf_stride.value[]),
-                        n_random_samples=round(Int, tf_nrandom.value[]),
-                        seed=round(Int, tf_seed.value[]),
+                        firstframe=parse(Int, tf_firstframe.value[]),
+                        lastframe=parse(Int, tf_lastframe.value[]),
+                        stride=parse(Int, tf_stride.value[]),
+                        n_random_samples=parse(Int, tf_nrandom.value[]),
+                        seed=parse(Int, tf_seed.value[]),
                         silent=false,
                         GC=true,
                         StableRNG=false,
@@ -863,7 +884,7 @@ function gui(;
             for sel in active_sels
                 combined_sel = isempty(strip(comp_sel)) ? sel : "($comp_sel) and ($sel)"
                 local sel_atoms
-                try; sel_atoms = PDBTools.select(at, combined_sel)
+                try; sel_atoms = select(at, combined_sel)
                 catch e; status_obs[] = "Error in selection '$combined_sel': $(sprint(showerror, e))"; return; end
                 isempty(sel_atoms) && (status_obs[] = "Selection '$combined_sel' matched no atoms"; return)
                 grp = SoluteGroup(sel_atoms)
@@ -912,7 +933,7 @@ function gui(;
             for sel in active_sels
                 combined_sel = isempty(strip(comp_sel)) ? sel : "($comp_sel) and ($sel)"
                 local sel_atoms
-                try; sel_atoms = PDBTools.select(at, combined_sel)
+                try; sel_atoms = select(at, combined_sel)
                 catch e; status_obs[] = "Error in selection '$combined_sel': $(sprint(showerror, e))"; return; end
                 isempty(sel_atoms) && (status_obs[] = "Selection '$combined_sel' matched no atoms"; return)
                 grp = SolventGroup(sel_atoms)
@@ -1105,7 +1126,7 @@ function gui(;
 
             status_obs[] = "Computing residue contributions…"
             try
-                sel_atoms = PDBTools.select(at, sel_str)
+                sel_atoms = select(at, sel_str)
                 if isempty(sel_atoms)
                     status_obs[] = "Selection '$sel_str' matched no atoms"; return
                 end
@@ -1174,7 +1195,7 @@ function gui(;
 
         # ── Tab 4 (RC): apply limits ──────────────────────────────────
         on(btn_rc_lims.value) do _
-            xlo = round(Int, tf_rc_xmin.value[]); xhi = round(Int, tf_rc_xmax.value[])
+            xlo = parse(Int, tf_rc_xmin.value[]); xhi = parse(Int, tf_rc_xmax.value[])
             xlims!(ax_rc_mddf, xlo, xhi); xlims!(ax_rc_cn, xlo, xhi)
             # y-limits are dmin/dmax — recompute the plot
             notify(btn_rc_plot.value)
