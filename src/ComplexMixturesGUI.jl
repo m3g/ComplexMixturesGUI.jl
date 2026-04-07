@@ -25,8 +25,8 @@ function guess_solvent_selection(atoms::AbstractVector{<:Atom}, result::Result)
         if length(rs) == result.solvent.natomspermol
             rname = resname(rs)
             if count(r -> resname(r) == rname, res) == result.solvent.nmols
-                    solvent_selection = "resname $rname"
-                    break
+                solvent_selection = "resname $rname"
+                break
             end
         end
     end
@@ -576,7 +576,10 @@ function gui(;
             tab_switch_js,
         )
 
-        status_bar = DOM.div(class="cm-status", status_obs)
+        status_bar = map(status_obs) do msg
+            cls = startswith(msg, "Error") ? "cm-status cm-status-err" : "cm-status cm-status-ok"
+            DOM.div(class=cls, msg)
+        end
 
         # ══════════════════════════════════════════════════════════════
         # CALLBACKS
@@ -659,9 +662,56 @@ function gui(;
             grp_active_slv[] = length(kept_names)
         end
 
-        # ── Full UI reset (called on every load) ──────────────────────
-        function _reset_ui!(R)
-            # ── Tab 1: MDDF & KB ──────────────────────────────────────
+        # ── Clear group/RC state (called before loading new data) ────
+        function _clear_group_state!()
+            for ax in (ax_sol_mddf, ax_sol_cn, ax_slv_mddf, ax_slv_cn)
+                empty!(ax)
+            end
+            grp_active_sol[] = 0
+            grp_active_slv[] = 0
+            for i in 1:MAX_GROUPS
+                grp_names_sol[i][]  = ""; grp_labels_sol[i][] = ""
+                grp_names_slv[i][]  = ""; grp_labels_slv[i][] = ""
+                grp_checks_sol[i].value[] = true
+                grp_checks_slv[i].value[] = true
+            end
+            last_sol_data[] = nothing
+            last_slv_data[] = nothing
+            empty!(ax_rc_mddf); empty!(ax_rc_cn)
+            last_rc_data[] = nothing
+        end
+
+        # ── Load JSON ──────────────────────────────────────────────────
+        on(btn_load.value) do _
+            json_path = strip(String(tf_json.value[]))
+            pdb_path  = strip(String(tf_pdb.value[]))
+            if isempty(json_path) || !isfile(json_path)
+                status_obs[] = "Error: JSON file not found: $json_path"; return
+            end
+            if isempty(pdb_path) || !isfile(pdb_path)
+                status_obs[] = "Error: PDB file not found: $pdb_path"; return
+            end
+            status_obs[] = "Loading…"
+            try
+                R  = ComplexMixtures.load(json_path)
+                at = read_pdb(pdb_path)
+                slv_sel = guess_solvent_selection(at, R)
+                # Clear group state before any observable triggers
+                _clear_group_state!()
+                # Set atoms first so reactive callbacks see correct atoms
+                atoms_obs[] = at
+                tf_comp_slv.value[] = slv_sel
+                # Setting result_obs triggers on(result_obs) which draws Tab 1
+                result_obs[] = R
+                status_obs[] = "Loaded: $json_path"
+            catch e
+                status_obs[] = "Error: $(sprint(showerror, e))"
+            end
+        end
+
+        # ── Tab 1: redraw on result change ────────────────────────────
+        on(result_obs) do R
+            R === nothing && return
             empty!(ax_mddf); empty!(ax_kb)
             for c in copy(fig1_mddf.content); c isa Legend && delete!(c); end
             for c in copy(fig1_kb.content);   c isa Legend && delete!(c); end
@@ -675,53 +725,6 @@ function gui(;
                 overview_obs[] = _overview_text(R)
             catch
                 overview_obs[] = "Overview unavailable."
-            end
-
-            # ── Tab 2 & 3: clear group contribution plots and group lists ──
-            for ax in (ax_sol_mddf, ax_sol_cn, ax_slv_mddf, ax_slv_cn)
-                empty!(ax)
-            end
-            for fig in (fig_sol_mddf, fig_sol_cn, fig_slv_mddf, fig_slv_cn)
-                for c in copy(fig.content); c isa Legend && delete!(c); end
-            end
-            grp_active_sol[] = 0
-            grp_active_slv[] = 0
-            for i in 1:MAX_GROUPS
-                grp_names_sol[i][]  = ""; grp_labels_sol[i][] = ""
-                grp_names_slv[i][]  = ""; grp_labels_slv[i][] = ""
-                grp_checks_sol[i].value[] = true
-                grp_checks_slv[i].value[] = true
-            end
-            last_sol_data[] = nothing
-            last_slv_data[] = nothing
-
-            # ── Tab 4: clear residue contribution plots ────────────────
-            empty!(ax_rc_mddf); empty!(ax_rc_cn)
-            last_rc_data[] = nothing
-        end
-
-        # ── Load JSON ──────────────────────────────────────────────────
-        on(btn_load.value) do _
-            json_path = strip(String(tf_json.value[]))
-            pdb_path  = strip(String(tf_pdb.value[]))
-            if isempty(json_path) || !isfile(json_path)
-                status_obs[] = "JSON file not found: $json_path"; return
-            end
-            if isempty(pdb_path) || !isfile(pdb_path)
-                status_obs[] = "PDB file not found: $pdb_path"; return
-            end
-            status_obs[] = "Loading…"
-            try
-                R  = ComplexMixtures.load(json_path)
-                at = read_pdb(pdb_path)
-                slv_sel = guess_solvent_selection(at, R)
-                atoms_obs[] = at
-                result_obs[] = R
-                tf_comp_slv.value[] = slv_sel
-                _reset_ui!(R)
-                status_obs[] = "Loaded: $json_path"
-            catch e
-                status_obs[] = "Error: $(sprint(showerror, e))"
             end
         end
 
@@ -1081,10 +1084,11 @@ function gui(;
             try
                 R  = ComplexMixtures.load(result)
                 at = read_pdb(pdbfile)
+                slv_sel = guess_solvent_selection(at, R)
+                _clear_group_state!()
                 atoms_obs[] = at
-                result_obs[] = R
-                tf_comp_slv.value[] = guess_solvent_selection(at, R)
-                _reset_ui!(R)
+                tf_comp_slv.value[] = slv_sel
+                result_obs[] = R  # triggers on(result_obs) → draws Tab 1
                 status_obs[] = "Loaded: $result"
             catch e
                 status_obs[] = "Error on preload: $(sprint(showerror, e))"
