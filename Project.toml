@@ -14,7 +14,7 @@ WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 [compat]
 Bonito = "0.6, 1, 2, 3, 4"
-CairoMakie = "0.12, 0.13"
+CairoMakie = "0.12, 0.13, 0.15"
 ComplexMixtures = "2.17"
 ImageMagick = "1.4.2"
 PDBTools = "3.24.0"
